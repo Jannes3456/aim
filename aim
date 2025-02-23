@@ -1,12 +1,13 @@
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local localPlayer = Players.LocalPlayer
 
 local aimlockEnabled = false
 local currentTarget = nil
 
--- Prüft, ob ein Spieler als Ziel in Frage kommt:
+-- Prüft, ob ein Spieler als Ziel in Frage kommt (nicht du, lebt, und nicht im gleichen Team)
 local function isEligible(player)
     if player == localPlayer then return false end
     if not player.Character then return false end
@@ -20,42 +21,46 @@ local function isEligible(player)
     return true
 end
 
--- Liefert alle eligible Spieler sortiert nach Entfernung (vom Head des lokalen Spielers):
-local function getEligibleTargets()
-    local targets = {}
-    if not (localPlayer.Character and localPlayer.Character:FindFirstChild("Head")) then
-        return targets
-    end
-    local myPos = localPlayer.Character.Head.Position
-    for _, player in pairs(Players:GetPlayers()) do
-        if isEligible(player) then
-            local head = player.Character.Head
-            local distance = (myPos - head.Position).Magnitude
-            table.insert(targets, {player = player, distance = distance})
+-- Liefert den nächstgelegenen eligible Gegner (Sortierung anhand der Head-Position)
+local function getNearestTarget()
+    local nearest = nil
+    local shortestDistance = math.huge
+    if localPlayer.Character and localPlayer.Character:FindFirstChild("Head") then
+        local myHeadPos = localPlayer.Character.Head.Position
+        for _, player in ipairs(Players:GetPlayers()) do
+            if isEligible(player) then
+                local head = player.Character.Head
+                local distance = (myHeadPos - head.Position).Magnitude
+                if distance < shortestDistance then
+                    shortestDistance = distance
+                    nearest = player
+                end
+            end
         end
     end
-    table.sort(targets, function(a, b)
-        return a.distance < b.distance
-    end)
-    return targets
+    return nearest
 end
 
--- Gibt den nächstgelegenen eligible Gegner zurück:
-local function getNearestTarget()
-    local targets = getEligibleTargets()
-    if #targets > 0 then
-        return targets[1].player
-    end
-    return nil
-end
-
--- Wechselt mit MouseButton4 zum nächsten Ziel in der sortierten Liste:
+-- Mit Maustaste 4 (MouseButton4) zum nächsten eligible Ziel wechseln
 local function cycleTarget()
-    local targets = getEligibleTargets()
+    local targets = {}
+    if localPlayer.Character and localPlayer.Character:FindFirstChild("Head") then
+        local myHeadPos = localPlayer.Character.Head.Position
+        for _, player in ipairs(Players:GetPlayers()) do
+            if isEligible(player) then
+                local head = player.Character.Head
+                local distance = (myHeadPos - head.Position).Magnitude
+                table.insert(targets, {player = player, distance = distance})
+            end
+        end
+        table.sort(targets, function(a, b) return a.distance < b.distance end)
+    end
+
     if #targets == 0 then
         currentTarget = nil
         return
     end
+
     if not currentTarget then
         currentTarget = targets[1].player
     else
@@ -78,14 +83,14 @@ local function cycleTarget()
     end
 end
 
--- Eingabeverarbeitung:
+-- Eingabeverarbeitung: Q toggelt den Aimlock, MouseButton4 wechselt das Ziel
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     if input.KeyCode == Enum.KeyCode.Q then
         aimlockEnabled = not aimlockEnabled
         if aimlockEnabled then
             currentTarget = getNearestTarget()
-            print("Aimlock aktiviert. Ziel: ", currentTarget and currentTarget.Name or "kein Ziel")
+            print("Aimlock aktiviert. Ziel:", currentTarget and currentTarget.Name or "kein Ziel")
         else
             currentTarget = nil
             print("Aimlock deaktiviert.")
@@ -93,22 +98,53 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     elseif input.KeyCode == Enum.KeyCode.MouseButton4 then
         if aimlockEnabled then
             cycleTarget()
-            print("Ziel gewechselt. Neues Ziel: ", currentTarget and currentTarget.Name or "kein Ziel")
+            print("Ziel gewechselt. Neues Ziel:", currentTarget and currentTarget.Name or "kein Ziel")
         end
     end
 end)
 
--- Kamera-Ausrichtung pro Frame:
+-- Überprüft kontinuierlich, ob das aktuelle Ziel noch gültig ist und aktualisiert es gegebenenfalls
 RunService.RenderStepped:Connect(function()
     if aimlockEnabled then
-        -- Falls das aktuelle Ziel ungültig ist, wähle automatisch den nächstgelegenen eligible Gegner:
         if not currentTarget or not isEligible(currentTarget) then
             currentTarget = getNearestTarget()
         end
-        if currentTarget and currentTarget.Character and currentTarget.Character:FindFirstChild("Head") then
-            local camera = workspace.CurrentCamera
-            local targetHead = currentTarget.Character.Head
-            camera.CFrame = CFrame.new(camera.CFrame.Position, targetHead.Position)
-        end
     end
 end)
+
+-- Wird aufgerufen, wenn die Waffe abgefeuert wird – teleportiert den Schuss an den Kopf des gelockten Gegners
+local function onGunFired()
+    if aimlockEnabled and currentTarget and currentTarget.Character and currentTarget.Character:FindFirstChild("Head") then
+        local targetHead = currentTarget.Character.Head
+        local targetPosition = targetHead.Position
+        
+        -- Hier teleportieren wir den Schuss: Statt eines normalen Projektils wird ein RemoteEvent ausgelöst,
+        -- das den Schaden (Headshot) direkt am Kopf des Gegners anwendet.
+        if ReplicatedStorage:FindFirstChild("BulletHit") then
+            ReplicatedStorage.BulletHit:FireServer(currentTarget, targetPosition, "headshot")
+            print("Schuss teleportiert zu", currentTarget.Name, "für einen Headshot!")
+        else
+            print("BulletHit RemoteEvent nicht gefunden!")
+        end
+    else
+        print("Aimlock nicht aktiv oder kein gültiges Ziel.")
+    end
+end
+
+-- Setze den Gun-Tool-Handler für alle Tools im Charakter (Waffe)
+local function setupGunTool(tool)
+    tool.Activated:Connect(onGunFired)
+end
+
+if localPlayer.Character then
+    for _, child in ipairs(localPlayer.Character:GetChildren()) do
+        if child:IsA("Tool") then
+            setupGunTool(child)
+        end
+    end
+    localPlayer.Character.ChildAdded:Connect(function(child)
+        if child:IsA("Tool") then
+            setupGunTool(child)
+        end
+    end)
+end
