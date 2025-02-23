@@ -1,104 +1,75 @@
--- Aimlock & Bullet Teleport Script for Roblox (Rivals-Like FPS)
--- Features:
--- - Toggle aimlock with 'Q' (locks onto the nearest enemy with >1 HP)
--- - Switch target with 'Mouse Button 4'
--- - Bullets teleport to the enemy's head, ignoring walls
+import time
+import keyboard
+import mouse
 
-local UserInputService = game:GetService("UserInputService")
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local LocalPlayer = Players.LocalPlayer
-local Camera = workspace.CurrentCamera
-local Mouse = LocalPlayer:GetMouse()
+# Platzhalterfunktionen für das Spiel
 
-local AimlockEnabled = false
-local TargetEnemy = nil
+def get_enemies():
+    """Gibt eine Liste aller Gegner zurück."""
+    return []  # Hier sollte die echte Spiellogik integriert werden
 
--- Function to find the nearest enemy with more than 1 HP
-local function FindNearestEnemy()
-    local closestEnemy = nil
-    local shortestDistance = math.huge
-    
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild("Head") then
-            local head = player.Character.Head
-            local humanoid = player.Character:FindFirstChildOfClass("Humanoid")
-            if humanoid and humanoid.Health > 1 then -- Only target players with more than 1 HP
-                local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
-                if onScreen then
-                    local distance = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(Mouse.X, Mouse.Y)).magnitude
-                    if distance < shortestDistance then
-                        shortestDistance = distance
-                        closestEnemy = player
-                    end
-                end
-            end
-        end
-    end
-    
-    return closestEnemy
-end
+def get_player_position():
+    """Gibt die aktuelle Position des Spielers zurück."""
+    return (0, 0, 0)  # Beispielkoordinaten
 
--- Function to lock aim onto target
-local function LockAim()
-    if TargetEnemy and TargetEnemy.Character then
-        local head = TargetEnemy.Character:FindFirstChild("Head")
-        if head then
-            Camera.CFrame = CFrame.new(Camera.CFrame.Position, head.Position)
-        end
-    end
-end
+def aim_at(target):
+    """Setzt das Fadenkreuz auf das Ziel."""
+    pass  # Hier sollte die echte Aimlogik stehen
 
--- Function to teleport bullets to the enemy's head
-local function TeleportBullet()
-    if TargetEnemy and TargetEnemy.Character then
-        local head = TargetEnemy.Character:FindFirstChild("Head")
-        if head then
-            local Bullet = Instance.new("Part")
-            Bullet.Size = Vector3.new(0.2, 0.2, 0.2)
-            Bullet.Color = Color3.fromRGB(255, 0, 0) -- Red to indicate hit
-            Bullet.Position = head.Position
-            Bullet.Anchored = true
-            Bullet.CanCollide = false
-            Bullet.Parent = workspace
-            
-            -- Simulate damage
-            local humanoid = TargetEnemy.Character:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                humanoid:TakeDamage(100) -- Headshot damage
-            end
-            
-            game.Debris:AddItem(Bullet, 0.5) -- Remove bullet after 0.5 seconds
-        end
-    end
-end
+def shoot():
+    """Feuert eine Kugel ab."""
+    mouse.click('left')
 
--- Toggle aimlock with 'Q'
-UserInputService.InputBegan:Connect(function(input, gameProcessed)
-    if gameProcessed then return end
-    
-    if input.KeyCode == Enum.KeyCode.Q then
-        AimlockEnabled = not AimlockEnabled
-        if AimlockEnabled then
-            TargetEnemy = FindNearestEnemy()
-        else
-            TargetEnemy = nil
-        end
-    end
-    
-    if input.UserInputType == Enum.UserInputType.MouseButton4 then
-        TargetEnemy = FindNearestEnemy() -- Switch to the next nearest enemy
-    end
-end)
+def is_enemy_on_crosshair():
+    """Prüft, ob ein Gegner auf dem Fadenkreuz ist."""
+    return True  # Diese Logik muss angepasst werden
 
--- Lock aim onto enemy every frame if aimlock is enabled
-RunService.RenderStepped:Connect(function()
-    if AimlockEnabled then
-        LockAim()
-    end
-end)
+def teleport_bullet_to_head(target):
+    """Teleportiert die Kugel direkt auf den Kopf des Gegners und verursacht Schaden."""
+    if target:
+        target.take_damage(100)  # Fügt Schaden zu, anstatt einfach die Gesundheit auf 0 zu setzen
 
--- Detect when player fires and teleport the bullet
-LocalPlayer:GetMouse().Button1Down:Connect(function()
-    TeleportBullet()
-end)
+def get_closest_enemy():
+    enemies = get_enemies()
+    valid_targets = [e for e in enemies if e.health > 1]
+    if valid_targets:
+        return min(valid_targets, key=lambda e: distance_to_player(e))
+    return None
+
+# Globale Variablen
+aimlock_enabled = False
+current_target = None
+
+def toggle_aimlock():
+    global aimlock_enabled, current_target
+    aimlock_enabled = not aimlock_enabled
+    if aimlock_enabled:
+        current_target = get_closest_enemy()
+
+def switch_target():
+    global current_target
+    enemies = get_enemies()
+    valid_targets = [e for e in enemies if e.health > 1]
+    if valid_targets:
+        current_index = valid_targets.index(current_target) if current_target in valid_targets else -1
+        current_target = valid_targets[(current_index + 1) % len(valid_targets)]
+
+def distance_to_player(enemy):
+    px, py, pz = get_player_position()
+    ex, ey, ez = enemy.position
+    return ((px - ex) ** 2 + (py - ey) ** 2 + (pz - ez) ** 2) ** 0.5
+
+def aimlock_loop():
+    while True:
+        if aimlock_enabled and current_target:
+            aim_at(current_target)
+            if is_enemy_on_crosshair():
+                shoot()
+                teleport_bullet_to_head(current_target)
+        time.sleep(0.01)
+
+keyboard.add_hotkey('q', toggle_aimlock)
+keyboard.add_hotkey('mouse button 4', switch_target)
+
+if __name__ == "__main__":
+    aimlock_loop()
